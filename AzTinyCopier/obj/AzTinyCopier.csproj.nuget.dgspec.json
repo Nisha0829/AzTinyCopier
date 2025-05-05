@@ -1,0 +1,103 @@
+{
+  "format": 1,
+  "restore": {
+    "/Users/nishasharma/Documents/AzTinyCopier/AzTinyCopier/AzTinyCopier.csproj": {}
+  },
+  "projects": {
+    "/Users/nishasharma/Documents/AzTinyCopier/AzTinyCopier/AzTinyCopier.csproj": {
+      "version": "1.0.0",
+      "restore": {
+        "projectUniqueName": "/Users/nishasharma/Documents/AzTinyCopier/AzTinyCopier/AzTinyCopier.csproj",
+        "projectName": "AzTinyCopier",
+        "projectPath": "/Users/nishasharma/Documents/AzTinyCopier/AzTinyCopier/AzTinyCopier.csproj",
+        "packagesPath": "/Users/nishasharma/.nuget/packages/",
+        "outputPath": "/Users/nishasharma/Documents/AzTinyCopier/AzTinyCopier/obj/",
+        "projectStyle": "PackageReference",
+        "configFilePaths": [
+          "/Users/nishasharma/.nuget/NuGet/NuGet.Config"
+        ],
+        "originalTargetFrameworks": [
+          "net5.0"
+        ],
+        "sources": {
+          "https://api.nuget.org/v3/index.json": {}
+        },
+        "frameworks": {
+          "net5.0": {
+            "targetAlias": "net5.0",
+            "projectReferences": {}
+          }
+        },
+        "warningProperties": {
+          "warnAsError": [
+            "NU1605"
+          ]
+        },
+        "restoreAuditProperties": {
+          "enableAudit": "true",
+          "auditLevel": "low",
+          "auditMode": "direct"
+        },
+        "SdkAnalysisLevel": "9.0.200"
+      },
+      "frameworks": {
+        "net5.0": {
+          "targetAlias": "net5.0",
+          "dependencies": {
+            "Azure.Storage.Blobs": {
+              "target": "Package",
+              "version": "[12.8.3, )"
+            },
+            "Azure.Storage.Queues": {
+              "target": "Package",
+              "version": "[12.6.1, )"
+            },
+            "Microsoft.ApplicationInsights.WorkerService": {
+              "target": "Package",
+              "version": "[2.17.0, )"
+            },
+            "Microsoft.Extensions.Hosting": {
+              "target": "Package",
+              "version": "[5.0.0, )"
+            },
+            "Newtonsoft.Json": {
+              "target": "Package",
+              "version": "[13.0.1, )"
+            }
+          },
+          "imports": [
+            "net461",
+            "net462",
+            "net47",
+            "net471",
+            "net472",
+            "net48",
+            "net481"
+          ],
+          "assetTargetFallback": true,
+          "warn": true,
+          "downloadDependencies": [
+            {
+              "name": "Microsoft.AspNetCore.App.Ref",
+              "version": "[5.0.0, 5.0.0]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Host.osx-x64",
+              "version": "[5.0.17, 5.0.17]"
+            },
+            {
+              "name": "Microsoft.NETCore.App.Ref",
+              "version": "[5.0.0, 5.0.0]"
+            }
+          ],
+          "frameworkReferences": {
+            "Microsoft.NETCore.App": {
+              "privateAssets": "all"
+            }
+          },
+          "runtimeIdentifierGraphPath": "/usr/local/share/dotnet/sdk/9.0.203/RuntimeIdentifierGraph.json"
+        }
+      }
+    }
+  }
+}

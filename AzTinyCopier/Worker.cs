@@ -14,6 +14,7 @@ using System.IO;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Text.Json;
 
 namespace AzTinyCopier
 {
@@ -268,9 +269,15 @@ namespace AzTinyCopier
                                 try
                                 {
                                     var json = System.Text.Json.JsonDocument.Parse(content);
-                                    if (json.RootElement.TryGetProperty("consentCreationDate", out var dateElement) &&
-                                        DateTime.TryParse(dateElement.ToString(), out DateTime documentDate) &&
-                                        documentDate > DateTime.UtcNow.AddDays(-30))
+                                    var root = json.RootElement;
+                                    var startDate = DateTime.UtcNow.Date.AddDays(-30);
+                                    var endDate = DateTime.UtcNow.Date.AddDays(1).AddTicks(-1);
+
+                                     if (root.TryGetProperty("consentCreationDate", out var dateElement) &&
+                                        root.TryGetProperty("isAnonymous", out var isAnonElement) &&
+                                        isAnonElement.ValueKind == JsonValueKind.False &&
+                                        dateElement.TryGetDateTime(out var documentDate) &&
+                                        documentDate >= startDate && documentDate <= endDate)
                                     {
                                         _logger.LogInformation("Consent Creation Date: {consentCreationDate}", dateElement.ToString());
 

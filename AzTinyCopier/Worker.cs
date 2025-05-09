@@ -264,8 +264,6 @@ namespace AzTinyCopier
                                 var downloadResponse = await source.DownloadAsync();
                                 using var reader = new StreamReader(downloadResponse.Value.Content);
                                 var content = await reader.ReadToEndAsync();
-                                 _logger.LogInformation("Blob content:\n{content}", content); // Logs to your configured logger
-
                                 try
                                 {
                                     var json = System.Text.Json.JsonDocument.Parse(content);

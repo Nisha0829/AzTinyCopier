@@ -258,9 +258,6 @@ namespace AzTinyCopier
                             if (blob.Value.Destination == null ||
                                 blob.Value.Source.LastModified > blob.Value.Destination.LastModified)
                             {
-                                var dest = destinationBlobContainerClient.GetBlobClient(blob.Key);
-                                var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
-
                                 var downloadResponse = await source.DownloadAsync();
                                 using var reader = new StreamReader(downloadResponse.Value.Content);
                                 var content = await reader.ReadToEndAsync();
@@ -281,6 +278,8 @@ namespace AzTinyCopier
 
                                         if (!_config.WhatIf)
                                         {
+                                            var dest = destinationBlobContainerClient.GetBlobClient(blob.Key);
+                                            var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
                                             await dest.SyncCopyFromUriAsync(new Uri($"{source.Uri.AbsoluteUri}{sasUri.Query}"));
                                         }
 

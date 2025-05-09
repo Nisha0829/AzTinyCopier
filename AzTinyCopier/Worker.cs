@@ -279,8 +279,8 @@ namespace AzTinyCopier
 
             
                                             var dest = destinationBlobContainerClient.GetBlobClient(blob.Key);
-                                            var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
-                                            await dest.SyncCopyFromUriAsync(new Uri($"{source.Uri.AbsoluteUri}{sasUri.Query}"));
+                                            var source1 = sourceBlobContainerClient.GetBlobClient(blob.Key);
+                                            await dest.SyncCopyFromUriAsync(new Uri($"{source1.Uri.AbsoluteUri}{sasUri.Query}"));
                             
 
                                         Interlocked.Add(ref blobCountMoved, 1);

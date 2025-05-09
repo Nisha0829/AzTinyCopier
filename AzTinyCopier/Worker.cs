@@ -276,12 +276,11 @@ namespace AzTinyCopier
                                     {
                                         _logger.LogInformation("Consent Creation Date: {consentCreationDate}", dateElement.ToString());
 
-                                        if (!_config.WhatIf)
-                                        {
+            
                                             var dest = destinationBlobContainerClient.GetBlobClient(blob.Key);
                                             var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
                                             await dest.SyncCopyFromUriAsync(new Uri($"{source.Uri.AbsoluteUri}{sasUri.Query}"));
-                                        }
+                            
 
                                         Interlocked.Add(ref blobCountMoved, 1);
                                         Interlocked.Add(ref blobBytesMoved, blob.Value.Source.Size);

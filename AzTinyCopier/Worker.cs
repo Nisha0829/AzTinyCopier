@@ -74,285 +74,197 @@ namespace AzTinyCopier
         }
 
         protected async Task<bool> ProcessQueueMessage(CancellationToken cancellationToken)
+{
+    var queueClient = new QueueClient(_config.OperationConnection, _config.QueueName);
+    QueueMessage queueMessage = null;
+    Message msg = null;
+    List<Message> messageBatch = new List<Message>();  // Batch for messages
+    const int maxBatchSize = 10000;  // Max number of messages to push in a single batch
+
+    using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("GetMessage"))
+    {
+        op.Telemetry.Properties.Add("Run", _config.Run);
+        op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
+        op.Telemetry.Properties.Add("OperationConnection", queueClient.AccountName);
+        op.Telemetry.Properties.Add("QueueName", _config.QueueName);
+        op.Telemetry.Properties.Add("VisibilityTimeout", _config.VisibilityTimeout.ToString());
+
+        await queueClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
+
+        if (queueClient.Exists())
         {
-            var queueClient = new QueueClient(_config.OperationConnection, _config.QueueName);
-            QueueMessage queueMessage = null;
-            Message msg = null;
+            queueMessage = await queueClient.ReceiveMessageAsync(TimeSpan.FromMinutes(_config.VisibilityTimeout), cancellationToken);
 
-            using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("GetMessage"))
+            if (queueMessage != null)
             {
-
-                op.Telemetry.Properties.Add("Run", _config.Run);
-                op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
-                op.Telemetry.Properties.Add("OperationConnection", queueClient.AccountName);
-                op.Telemetry.Properties.Add("QueueName", _config.QueueName);
-                op.Telemetry.Properties.Add("VisibilityTimeout", _config.VisibilityTimeout.ToString());
-
-                await queueClient.CreateIfNotExistsAsync(cancellationToken: cancellationToken);
-
-                if (queueClient.Exists())
-                {
-                    queueMessage = await queueClient.ReceiveMessageAsync(TimeSpan.FromMinutes(_config.VisibilityTimeout), cancellationToken);
-
-                    if (queueMessage != null)
-                    {
-                        msg = Message.FromString(queueMessage.MessageText);
-                    }
-                }
-
-                op.Telemetry.Properties.Add("QueueEmpty", (queueMessage == null).ToString());
+                msg = Message.FromString(queueMessage.MessageText);
             }
+        }
 
-            if (msg == null)
+        op.Telemetry.Properties.Add("QueueEmpty", (queueMessage == null).ToString());
+    }
+
+    if (msg == null)
+    {
+        return false;
+    }
+
+    // Processing the "ProcessAccount" action
+    if (msg.Action.Equals("ProcessAccount", StringComparison.InvariantCultureIgnoreCase))
+    {
+        _logger.LogInformation("ProcessAccount");
+
+        using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessAccount"))
+        {
+            var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
+            int containerCount = 0;
+
+            foreach (var container in sourceBlobServiceClient.GetBlobContainers())
             {
-                return false;
-            }
-
-
-            if (msg.Action.Equals("ProcessAccount", StringComparison.InvariantCultureIgnoreCase))
-            {
-                _logger.LogInformation("ProcessAccount");
-                //Create one queue message for each container in the source account
-                using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessAccount"))
+                // Create a message for each container and add to the batch
+                var message = new Message()
                 {
-                    var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
-                    int containerCount = 0;
+                    Action = "ProcessPath",
+                    Container = container.Name,
+                    Path = string.Empty
+                };
+                messageBatch.Add(message);
+                containerCount++;
 
-                    foreach (var container in sourceBlobServiceClient.GetBlobContainers())
-                    {
-                        await queueClient.SendMessageAsync((new Message()
-                        {
-                            Action = "ProcessPath",
-                            Container = container.Name,
-                            Path = string.Empty
-                        }).ToString());
-                        containerCount++;
-                    }
-
-                    op.Telemetry.Properties.Add("Run", _config.Run);
-                    op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
-                    op.Telemetry.Properties.Add("SourceConnection", sourceBlobServiceClient.AccountName);
-                    op.Telemetry.Properties.Add("containerCount", containerCount.ToString());
+                // If batch is full, send the messages and clear the batch
+                if (messageBatch.Count >= maxBatchSize)
+                {
+                    await SendBatchMessages(queueClient, messageBatch, cancellationToken);
+                    messageBatch.Clear();  // Clear the batch after sending
                 }
             }
-            else if (msg.Action.Equals("ProcessPath", StringComparison.InvariantCultureIgnoreCase))
-            {
-                _logger.LogInformation($"ProcessPath: {msg.Container} {msg.Path}");
-                using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessPath"))
-                {
-                    var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
-                    var sourceBlobContainerClient = sourceBlobServiceClient.GetBlobContainerClient(msg.Container);
 
-                    var sasBuilder = new BlobSasBuilder()
+            // Send remaining messages if any
+            if (messageBatch.Any())
+            {
+                await SendBatchMessages(queueClient, messageBatch, cancellationToken);
+            }
+
+            op.Telemetry.Properties.Add("Run", _config.Run);
+            op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
+            op.Telemetry.Properties.Add("SourceConnection", sourceBlobServiceClient.AccountName);
+            op.Telemetry.Properties.Add("containerCount", containerCount.ToString());
+        }
+    }
+
+    // Processing other actions such as "ProcessPath" and "ProcessDocument"
+    else if (msg.Action.Equals("ProcessPath", StringComparison.InvariantCultureIgnoreCase))
+    {
+        _logger.LogInformation($"ProcessPath: {msg.Container} {msg.Path}");
+
+        // Process paths, collect messages, and add them to the batch
+        using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessPath"))
+        {
+            var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
+            var sourceBlobContainerClient = sourceBlobServiceClient.GetBlobContainerClient(msg.Container);
+
+            await foreach (var item in sourceBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
+            {
+                if (item.IsPrefix)
+                {
+                    // Create a new message for the prefix and add it to the batch
+                    var prefixMessage = new Message()
                     {
-                        BlobContainerName = msg.Container,
-                        Resource = "c",
-                        ExpiresOn = DateTimeOffset.UtcNow.AddMinutes(_config.VisibilityTimeout)
+                        Action = "ProcessPath",
+                        Container = msg.Container,
+                        Path = item.Prefix
                     };
-                    sasBuilder.SetPermissions(BlobAccountSasPermissions.Read);
-                    Uri sasUri = sourceBlobContainerClient.GenerateSasUri(sasBuilder);
-                    var sourceBlobs = new ConcurrentDictionary<string, BlobInfo>();
+                    messageBatch.Add(prefixMessage);
 
-                    var destinationBlobServiceClient = new BlobServiceClient(_config.DestinationConnection);
-                    var destinationBlobContainerClient = destinationBlobServiceClient.GetBlobContainerClient(msg.Container);
-                    var destinationBlobs = new ConcurrentDictionary<string, BlobInfo>();
-                    await destinationBlobContainerClient.CreateIfNotExistsAsync();
-
-                    var operationBlobServiceClient = new BlobServiceClient(_config.OperationConnection);
-                    var operationBlobContainerClient = operationBlobServiceClient.GetBlobContainerClient(msg.Container);
-                    await operationBlobContainerClient.CreateIfNotExistsAsync();
-
-
-                    long blobCount = 0;
-                    long blobBytes = 0;
-                    long blobCountMoved = 0;
-                    long blobBytesMoved = 0;
-                    long subPrefixes = 0;
-                    string fileName = "status.csv";
-                    var blobs = new Dictionary<string, SourceDestinationInfo>();
-
-                    if (string.IsNullOrEmpty(_config.Delimiter))
+                    // If batch is full, send the messages and clear the batch
+                    if (messageBatch.Count >= maxBatchSize)
                     {
-                        _config.Delimiter = "/";
+                        await SendBatchMessages(queueClient, messageBatch, cancellationToken);
+                        messageBatch.Clear();
                     }
-
-                    if (_config.ThreadCount < 1)
+                }
+                else if (item.IsBlob)
+                {
+                    // Create a message for the blob and add to the batch
+                    var blobMessage = new Message()
                     {
-                        _config.ThreadCount = Environment.ProcessorCount * 8;
+                        Action = "ProcessDocument",
+                        Container = msg.Container,
+                        Path = item.Blob.Name
+                    };
+                    messageBatch.Add(blobMessage);
+
+                    // If batch is full, send the messages and clear the batch
+                    if (messageBatch.Count >= maxBatchSize)
+                    {
+                        await SendBatchMessages(queueClient, messageBatch, cancellationToken);
+                        messageBatch.Clear();
                     }
-                    var slim = new SemaphoreSlim(_config.ThreadCount);
-
-                    var getSourceTask = Task.Run(async () =>
-                    {
-                        await foreach (var item in sourceBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
-                        {
-                            if (item.IsPrefix)
-                            {
-                                await queueClient.SendMessageAsync((new Message()
-                                {
-                                    Action = "ProcessPath",
-                                    Container = msg.Container,
-                                    Path = item.Prefix
-                                }).ToString());
-                                subPrefixes++;
-                            }
-                            else if (item.IsBlob)
-                                {
-                                    // Optionally track the blob
-                                    sourceBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
-                                     _logger.LogInformation($"Adding to queue: Action=ProcessDocument, Container={msg.Container}, Path={item.Blob.Name}");
-
-
-                                    // Push a new message for each blob
-                                    await queueClient.SendMessageAsync((new Message()
-                                    {
-                                        Action = "ProcessDocument",
-                                        Container = msg.Container,
-                                        Path = item.Blob.Name
-                                    }).ToString(), cancellationToken: cancellationToken);
-                                }
-                        }
-                    });
-
-                    var getDestinationTask = Task.Run(async () =>
-                    {
-                        await foreach (var item in destinationBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
-                        {
-                            if (item.IsBlob)
-                            {
-                                destinationBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
-                            }
-                        }
-                    });
-
-                    await Task.WhenAll(getSourceTask, getDestinationTask);
-
-
-                    if (File.Exists(fileName))
-                        File.Delete(fileName);
-                        
-                    using (StreamWriter sw = new StreamWriter(fileName))
-                    {
-                        await sw.WriteLineAsync($"File,Source Size,Source MD5,Source Last Modified,Destination Size,Destination MD5,Destination Last Modified");
-                        foreach (var item in sourceBlobs)
-                        {
-                            if (destinationBlobs.ContainsKey(item.Key))
-                            {
-                                var destinationBlob = destinationBlobs[item.Key];
-                                await sw.WriteLineAsync($"{item.Key},{item.Value.Size},{item.Value.ContentMD5},{item.Value.LastModified},{destinationBlob.Size},{destinationBlob.ContentMD5},{destinationBlob.LastModified}");
-                                blobs.Add(item.Key, new SourceDestinationInfo(item.Value, destinationBlob));
-                            }
-                            else
-                            {
-                                await sw.WriteLineAsync($"{item.Key},{item.Value.Size},{item.Value.ContentMD5},{item.Value.LastModified},,,");
-                                blobs.Add(item.Key, new SourceDestinationInfo(item.Value));
-                            }
-                        }
-                    }
-                    var toUpload = operationBlobContainerClient.GetBlobClient($"{msg.Path}{fileName}");
-                    await toUpload.DeleteIfExistsAsync(cancellationToken: cancellationToken);
-                    await toUpload.UploadAsync(fileName, cancellationToken: cancellationToken);
-
-                    var blobSet = new ConcurrentBag<Task>();
-
-                    foreach (var blob in blobs)
-                    {
-                        blobSet.Add(Task.Run(async () =>
-                        {
-                            await slim.WaitAsync(cancellationToken);
-
-                            if (blob.Value.Destination == null 
-                                || blob.Value.Source.LastModified > blob.Value.Destination.LastModified)
-                            {
-                                if (!_config.WhatIf)
-                                {
-                                    var dest = destinationBlobContainerClient.GetBlobClient(blob.Key);
-                                    var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
-
-                                    await dest.SyncCopyFromUriAsync(new Uri($"{source.Uri.AbsoluteUri}{sasUri.Query}"));
-                                    await source.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: cancellationToken);
-
-                                }
-
-                                Interlocked.Add(ref blobCountMoved, 1);
-                                Interlocked.Add(ref blobBytesMoved, blob.Value.Source.Size);
-                            }
-
-                            Interlocked.Add(ref blobCount, 1);
-                            Interlocked.Add(ref blobBytes, blob.Value.Source.Size);
-
-                            slim.Release();
-                        }));
-                    }
-
-                    await Task.WhenAll(blobSet.ToArray());
-
-
-                    op.Telemetry.Properties.Add("Run", _config.Run);
-                    op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
-                    op.Telemetry.Properties.Add("ThreadCount", _config.ThreadCount.ToString());
-                    op.Telemetry.Properties.Add("Container", msg.Container);
-                    op.Telemetry.Properties.Add("SourceConnection", sourceBlobServiceClient.AccountName);
-                    op.Telemetry.Properties.Add("DestinationConnection", destinationBlobServiceClient.AccountName);
-                    op.Telemetry.Properties.Add("Delimiter", _config.Delimiter);
-                    op.Telemetry.Properties.Add("Prefix", msg.Path);
-                    op.Telemetry.Properties.Add("blobCount", blobCount.ToString());
-                    op.Telemetry.Properties.Add("blobBytes", blobBytes.ToString());
-                    op.Telemetry.Properties.Add("blobCountMoved", blobCountMoved.ToString());
-                    op.Telemetry.Properties.Add("blobBytesMoved", blobBytesMoved.ToString());
-                    op.Telemetry.Properties.Add("subPrefixes", subPrefixes.ToString());
                 }
             }
 
-            else if (msg.Action.Equals("ProcessDocument", StringComparison.InvariantCultureIgnoreCase))
-                {
-                    _logger.LogInformation($"ProcessDocument: {msg.Container} {msg.Path}");
-                    using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessDocument"))
-                    {
-                        var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
-                        var sourceBlobContainerClient = sourceBlobServiceClient.GetBlobContainerClient(msg.Container);
-                        var sourceBlob = sourceBlobContainerClient.GetBlobClient(msg.Path);
+            // Send remaining messages if any
+            if (messageBatch.Any())
+            {
+                await SendBatchMessages(queueClient, messageBatch, cancellationToken);
+            }
+        }
+    }
 
-                        var destinationBlobServiceClient = new BlobServiceClient(_config.DestinationConnection);
-                        var destinationBlobContainerClient = destinationBlobServiceClient.GetBlobContainerClient(msg.Container);
-                        await destinationBlobContainerClient.CreateIfNotExistsAsync();
+    else if (msg.Action.Equals("ProcessDocument", StringComparison.InvariantCultureIgnoreCase))
+    {
+        _logger.LogInformation($"ProcessDocument: {msg.Container} {msg.Path}");
 
-                        var destBlob = destinationBlobContainerClient.GetBlobClient(msg.Path);
+        // Process document and add additional messages if needed
+        using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessDocument"))
+        {
+            var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
+            var sourceBlobContainerClient = sourceBlobServiceClient.GetBlobContainerClient(msg.Container);
+            var sourceBlob = sourceBlobContainerClient.GetBlobClient(msg.Path);
 
-                        var operationBlobServiceClient = new BlobServiceClient(_config.OperationConnection);
-                        var sasBuilder = new BlobSasBuilder()
-                        {
-                            BlobContainerName = msg.Container,
-                            Resource = "c",
-                            ExpiresOn = DateTimeOffset.UtcNow.AddMinutes(_config.VisibilityTimeout)
-                        };
-                        sasBuilder.SetPermissions(BlobAccountSasPermissions.Read);
-                        Uri sasUri = sourceBlobContainerClient.GenerateSasUri(sasBuilder);
+            var destinationBlobServiceClient = new BlobServiceClient(_config.DestinationConnection);
+            var destinationBlobContainerClient = destinationBlobServiceClient.GetBlobContainerClient(msg.Container);
+            await destinationBlobContainerClient.CreateIfNotExistsAsync();
 
-                        if (!_config.WhatIf)
-                        {
-                            await destBlob.SyncCopyFromUriAsync(new Uri($"{sourceBlob.Uri.AbsoluteUri}{sasUri.Query}"));
-                            await sourceBlob.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots);
-                        }
+            var destBlob = destinationBlobContainerClient.GetBlobClient(msg.Path);
 
-                        op.Telemetry.Properties.Add("BlobPath", msg.Path);
-                    }
+            if (!_config.WhatIf)
+            {
+                await destBlob.SyncCopyFromUriAsync(new Uri($"{sourceBlob.Uri.AbsoluteUri}{sasUri.Query}"));
+                await sourceBlob.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots);
+            }
+
+            op.Telemetry.Properties.Add("BlobPath", msg.Path);
+        }
+    }
+
+    // Remove queue message after processing
+    using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("Remove Queue Message"))
+    {
+        op.Telemetry.Properties.Add("Run", _config.Run);
+        op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
+        op.Telemetry.Properties.Add("OperationConnection", queueClient.AccountName);
+        op.Telemetry.Properties.Add("QueueName", _config.QueueName);
+
+        await queueClient.DeleteMessageAsync(queueMessage.MessageId, queueMessage.PopReceipt, cancellationToken: cancellationToken);
+    }
+
+    return true;
 }
 
+private async Task SendBatchMessages(QueueClient queueClient, List<Message> messageBatch, CancellationToken cancellationToken)
+{
+    if (messageBatch.Any())
+    {
+        // Convert List<Message> to an array of string messages
+        var batchMessages = messageBatch.Select(m => m.ToString()).ToArray();
 
-            using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("Remove Queue Message"))
-            {
+        // Send messages in the batch to the queue
+        await queueClient.SendMessagesAsync(batchMessages, cancellationToken);
+        _logger.LogInformation($"Batch of {batchMessages.Length} messages sent to the queue.");
+    }
+}
 
-                op.Telemetry.Properties.Add("Run", _config.Run);
-                op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
-                op.Telemetry.Properties.Add("OperationConnection", queueClient.AccountName);
-                op.Telemetry.Properties.Add("QueueName", _config.QueueName);
-
-                await queueClient.DeleteMessageAsync(queueMessage.MessageId, queueMessage.PopReceipt, cancellationToken: cancellationToken);
-            }
-
-            return true;
-        }
 
     }
 }

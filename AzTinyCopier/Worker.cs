@@ -177,57 +177,92 @@ namespace AzTinyCopier
                     {
                         _config.ThreadCount = Environment.ProcessorCount * 8;
                     }
-                    var slim = new SemaphoreSlim(_config.ThreadCount);
-
-                    var getSourceTask = Task.Run(async () =>
+                var slim = new SemaphoreSlim(_config.ThreadCount);
+                var blobSet = new ConcurrentBag<Task>();
+                 var getSourceTask = Task.Run(async () =>
                     {
+                        var batch = new List<string>();
+                        const int maxLogicalBatchSize = 100000;
+
                         await foreach (var item in sourceBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
                         {
                             if (item.IsPrefix)
                             {
-                                var batch = new List<string>();
-                                const int maxLogicalBatchSize = 100000;
-                                const int azureQueueBatchSizeLimit = 32;
-                                
-                                await foreach (var item in sourceBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
+                                var messageText = new Message()
                                 {
-                                    if (item.IsPrefix)
-                                    {
-                                        var messageText = new Message()
-                                        {
-                                            Action = "ProcessPath",
-                                            Container = msg.Container,
-                                            Path = item.Prefix
-                                        }.ToString();
-                                
-                                        batch.Add(messageText);
-                                        subPrefixes++;
-                                
-                                        if (batch.Count >= maxLogicalBatchSize)
-                                        {
-                                            await SendMessagesInChunksAsync(queueClient, batch, cancellationToken);
-                                            batch.Clear();
-                                        }
-                                    }
-                                    else if (item.IsBlob)
-                                    {
-                                        // Blob processing logic remains here
-                                    }
-                                }
-                                
-                                // Send remaining messages in batch
-                                if (batch.Count > 0)
+                                    Action = "ProcessPath",
+                                    Container = msg.Container,
+                                    Path = item.Prefix
+                                }.ToString();
+
+                                batch.Add(messageText);
+                                subPrefixes++;
+
+                                if (batch.Count >= maxLogicalBatchSize)
                                 {
                                     await SendMessagesInChunksAsync(queueClient, batch, cancellationToken);
+                                    batch.Clear();
                                 }
-
-                                subPrefixes++;
                             }
-                            else if (item.IsBlob)
+                           else if (item.IsBlob)
                             {
+                                var blobName = item.Blob.Name;
+                                var blobClient = sourceBlobContainerClient.GetBlobClient(blobName);
+
+                                blobSet.Add(Task.Run(async () =>
+                                {
+                                    await slim.WaitAsync(cancellationToken);
+                                    try
+                                    {
+                                        var downloadResponse = await blobClient.DownloadAsync(cancellationToken: cancellationToken);
+                                        using var reader = new StreamReader(downloadResponse.Value.Content);
+                                        var content = await reader.ReadToEndAsync();
+
+                                        try
+                                        {
+                                            var json = JsonDocument.Parse(content).RootElement;
+
+                                            var startDate = DateTime.UtcNow.Date.AddDays(-30);
+                                            var endDate = DateTime.UtcNow.Date.AddDays(1).AddTicks(-1);
+
+                                            if (json.TryGetProperty("consentCreationDate", out var dateElement) &&
+                                                json.TryGetProperty("isAnonymous", out var isAnonElement) &&
+                                                isAnonElement.ValueKind == JsonValueKind.False &&
+                                                dateElement.TryGetDateTime(out var documentDate) &&
+                                                documentDate >= startDate && documentDate <= endDate)
+                                            {
+                                                _logger.LogInformation("Consent Creation Date: {consentCreationDate}", dateElement.ToString());
+
+                                                var destClient = destinationBlobContainerClient.GetBlobClient(blobName);
+                                                await destClient.SyncCopyFromUriAsync(new Uri($"{blobClient.Uri}{sasUri.Query}"), cancellationToken: cancellationToken);
+
+                                                Interlocked.Add(ref blobCountMoved, 1);
+                                                Interlocked.Add(ref blobBytesMoved, item.Blob.Properties.ContentLength ?? 0);
+                                            }
+                                        }
+                                        catch (JsonException ex)
+                                        {
+                                            _logger.LogWarning($"Failed to parse JSON in blob: {blobName} - Skipping copy. Error: {ex.Message}");
+                                        }
+
+                                        Interlocked.Increment(ref blobCount);
+                                        Interlocked.Add(ref blobBytes, item.Blob.Properties.ContentLength ?? 0);
+                                    }
+                                    finally
+                                    {
+                                        slim.Release();
+                                    }
+                                }));
                             }
+
+                        }
+
+                        if (batch.Count > 0)
+                        {
+                            await SendMessagesInChunksAsync(queueClient, batch, cancellationToken);
                         }
                     });
+
 
                     var getDestinationTask = Task.Run(async () =>
                     {
@@ -251,65 +286,6 @@ namespace AzTinyCopier
                     var toUpload = operationBlobContainerClient.GetBlobClient($"{msg.Path}{fileName}");
                     await toUpload.DeleteIfExistsAsync(cancellationToken: cancellationToken);
                     await toUpload.UploadAsync(fileName, cancellationToken: cancellationToken);
-
-                    var blobSet = new ConcurrentBag<Task>();
-
-                    foreach (var blob in blobs)
-                {
-                    blobSet.Add(Task.Run(async () =>
-                    {
-                        await slim.WaitAsync(cancellationToken);
-
-                        try
-                        {
-                            Interlocked.Add(ref blobCount, 1);
-                            Interlocked.Add(ref blobBytes, blob.Value.Source.Size);
-
-                            if (blob.Value.Destination == null ||
-                                blob.Value.Source.LastModified > blob.Value.Destination.LastModified)
-                            {
-                                var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
-                                var downloadResponse = await source.DownloadAsync();
-                                using var reader = new StreamReader(downloadResponse.Value.Content);
-                                var content = await reader.ReadToEndAsync();
-                                try
-                                {
-                                    var json = System.Text.Json.JsonDocument.Parse(content);
-                                    var root = json.RootElement;
-                                    var startDate = DateTime.UtcNow.Date.AddDays(-30);
-                                    var endDate = DateTime.UtcNow.Date.AddDays(1).AddTicks(-1);
-
-                                     if (root.TryGetProperty("consentCreationDate", out var dateElement) &&
-                                        root.TryGetProperty("isAnonymous", out var isAnonElement) &&
-                                        isAnonElement.ValueKind == JsonValueKind.False &&
-                                        dateElement.TryGetDateTime(out var documentDate) &&
-                                        documentDate >= startDate && documentDate <= endDate)
-                                    {
-                                        _logger.LogInformation("Consent Creation Date: {consentCreationDate}", dateElement.ToString());
-
-            
-                                            var dest = destinationBlobContainerClient.GetBlobClient(blob.Key);
-                                            var source1 = sourceBlobContainerClient.GetBlobClient(blob.Key);
-                                            await dest.SyncCopyFromUriAsync(new Uri($"{source1.Uri.AbsoluteUri}{sasUri.Query}"));
-                            
-
-                                        Interlocked.Add(ref blobCountMoved, 1);
-                                        Interlocked.Add(ref blobBytesMoved, blob.Value.Source.Size);
-                                    }
-                                }
-                                catch (System.Text.Json.JsonException ex)
-                                {
-                                    _logger.LogWarning($"Failed to parse JSON in blob: {blob.Key} - Skipping copy. Error: {ex.Message}");
-                                }
-                            }
-                        }
-                        finally
-                        {
-                            slim.Release();
-                        }
-                    }));
-                }
-
 
                     await Task.WhenAll(blobSet.ToArray());
 

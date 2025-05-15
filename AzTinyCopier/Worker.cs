@@ -196,9 +196,6 @@ namespace AzTinyCopier
                         }
                     });
 
-                    await Task.WhenAll(getSourceTask, getDestinationTask);
-
-
                     if (File.Exists(fileName))
                         File.Delete(fileName);
                         

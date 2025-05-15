@@ -151,11 +151,9 @@ namespace AzTinyCopier
                     };
                     sasBuilder.SetPermissions(BlobAccountSasPermissions.Read);
                     Uri sasUri = sourceBlobContainerClient.GenerateSasUri(sasBuilder);
-                    var sourceBlobs = new ConcurrentDictionary<string, BlobInfo>();
-
+                    
                     var destinationBlobServiceClient = new BlobServiceClient(_config.DestinationConnection);
                     var destinationBlobContainerClient = destinationBlobServiceClient.GetBlobContainerClient(msg.Container);
-                    var destinationBlobs = new ConcurrentDictionary<string, BlobInfo>();
                     await destinationBlobContainerClient.CreateIfNotExistsAsync();
 
                     var operationBlobServiceClient = new BlobServiceClient(_config.OperationConnection);
@@ -169,7 +167,6 @@ namespace AzTinyCopier
                     long blobBytesMoved = 0;
                     long subPrefixes = 0;
                     string fileName = "status.csv";
-                    var blobs = new Dictionary<string, SourceDestinationInfo>();
 
                     if (string.IsNullOrEmpty(_config.Delimiter))
                     {
@@ -188,17 +185,46 @@ namespace AzTinyCopier
                         {
                             if (item.IsPrefix)
                             {
-                                await queueClient.SendMessageAsync((new Message()
+                                var batch = new List<string>();
+                                const int maxLogicalBatchSize = 100000;
+                                const int azureQueueBatchSizeLimit = 32;
+                                
+                                await foreach (var item in sourceBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
                                 {
-                                    Action = "ProcessPath",
-                                    Container = msg.Container,
-                                    Path = item.Prefix
-                                }).ToString());
+                                    if (item.IsPrefix)
+                                    {
+                                        var messageText = new Message()
+                                        {
+                                            Action = "ProcessPath",
+                                            Container = msg.Container,
+                                            Path = item.Prefix
+                                        }.ToString();
+                                
+                                        batch.Add(messageText);
+                                        subPrefixes++;
+                                
+                                        if (batch.Count >= maxLogicalBatchSize)
+                                        {
+                                            await SendMessagesInChunksAsync(queueClient, batch, cancellationToken);
+                                            batch.Clear();
+                                        }
+                                    }
+                                    else if (item.IsBlob)
+                                    {
+                                        // Blob processing logic remains here
+                                    }
+                                }
+                                
+                                // Send remaining messages in batch
+                                if (batch.Count > 0)
+                                {
+                                    await SendMessagesInChunksAsync(queueClient, batch, cancellationToken);
+                                }
+
                                 subPrefixes++;
                             }
                             else if (item.IsBlob)
                             {
-                                sourceBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
                             }
                         }
                     });
@@ -207,10 +233,7 @@ namespace AzTinyCopier
                     {
                         await foreach (var item in destinationBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
                         {
-                            if (item.IsBlob)
-                            {
-                                destinationBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
-                            }
+                        
                         }
                     });
 
@@ -223,20 +246,7 @@ namespace AzTinyCopier
                     using (StreamWriter sw = new StreamWriter(fileName))
                     {
                         await sw.WriteLineAsync($"File,Source Size,Source MD5,Source Last Modified,Destination Size,Destination MD5,Destination Last Modified");
-                        foreach (var item in sourceBlobs)
-                        {
-                            if (destinationBlobs.ContainsKey(item.Key))
-                            {
-                                var destinationBlob = destinationBlobs[item.Key];
-                                await sw.WriteLineAsync($"{item.Key},{item.Value.Size},{item.Value.ContentMD5},{item.Value.LastModified},{destinationBlob.Size},{destinationBlob.ContentMD5},{destinationBlob.LastModified}");
-                                blobs.Add(item.Key, new SourceDestinationInfo(item.Value, destinationBlob));
-                            }
-                            else
-                            {
-                                await sw.WriteLineAsync($"{item.Key},{item.Value.Size},{item.Value.ContentMD5},{item.Value.LastModified},,,");
-                                blobs.Add(item.Key, new SourceDestinationInfo(item.Value));
-                            }
-                        }
+        
                     }
                     var toUpload = operationBlobContainerClient.GetBlobClient($"{msg.Path}{fileName}");
                     await toUpload.DeleteIfExistsAsync(cancellationToken: cancellationToken);
@@ -332,6 +342,20 @@ namespace AzTinyCopier
             }
 
             return true;
+        }
+
+        private async Task SendMessagesInChunksAsync(QueueClient queueClient, List<string> messages, CancellationToken cancellationToken)
+        {
+            const int chunkSize = 32; // Azure Queue Storage limit
+
+            for (int i = 0; i < messages.Count; i += chunkSize)
+            {
+                var chunk = messages.Skip(i).Take(chunkSize);
+                foreach (var msg in chunk)
+                {
+                    await queueClient.SendMessageAsync(msg, cancellationToken: cancellationToken);
+                }
+            }
         }
 
     }

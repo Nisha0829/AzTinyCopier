@@ -193,6 +193,18 @@ namespace AzTinyCopier
                                             dateElement.TryGetDateTime(out var documentDate) &&
                                             documentDate >= startDate && documentDate <= endDate)
                                         {
+                                            var destinationBlobClient = destinationBlobContainerClient.GetBlobClient(blobName);
+                                            if (!_config.WhatIf)
+                                            {
+                                                await destinationBlobClient.StartCopyFromUriAsync(blobClient.Uri, cancellationToken: cancellationToken);
+                                            }
+                                            
+                                            // Delete the source blob
+                                            if (!_config.WhatIf && _config.DeleteSourceAfterCopy)
+                                            {
+                                                await blobClient.DeleteIfExistsAsync(cancellationToken: cancellationToken);
+                                            }
+
                                             // Send message for each document (blob) that passes the criteria
                                             _logger.LogInformation("Sending message for document: {blobName}", blobName);
                                             var messageText = JsonSerializer.Serialize(new

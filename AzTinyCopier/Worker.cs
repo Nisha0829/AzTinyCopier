@@ -165,7 +165,6 @@ namespace AzTinyCopier
                     long blobCountMoved = 0;
                     long blobBytesMoved = 0;
                     long subPrefixes = 0;
-                    string fileName = "status.csv";
                     var blobs = new Dictionary<string, SourceDestinationInfo>();
 
                     if (string.IsNullOrEmpty(_config.Delimiter))
@@ -195,13 +194,7 @@ namespace AzTinyCopier
                             }
                         }
                     });
-
-                    if (File.Exists(fileName))
-                        File.Delete(fileName);
-                        
-                    var toUpload = operationBlobContainerClient.GetBlobClient($"{msg.Path}{fileName}");
                     await toUpload.DeleteIfExistsAsync(cancellationToken: cancellationToken);
-                    await toUpload.UploadAsync(fileName, cancellationToken: cancellationToken);
 
                     var blobSet = new ConcurrentBag<Task>();
 

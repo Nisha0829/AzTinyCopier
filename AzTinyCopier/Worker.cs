@@ -245,12 +245,15 @@ namespace AzTinyCopier
 
                     foreach (var blob in blobs)
                     {
+
+
                         blobSet.Add(Task.Run(async () =>
                         {
                             await slim.WaitAsync(cancellationToken);
                             try
                                 {
                                     // Download blob content
+                                    var sourceBlobClient = sourceBlobContainerClient.GetBlobClient(blob.Key);
                                     var downloadResponse = await blobClient.DownloadAsync(cancellationToken: cancellationToken);
                                     using var reader = new StreamReader(downloadResponse.Value.Content);
                                     var content = await reader.ReadToEndAsync();

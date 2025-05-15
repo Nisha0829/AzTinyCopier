@@ -200,6 +200,8 @@ namespace AzTinyCopier
                                 {
                                     // Optionally track the blob
                                     sourceBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
+                                     _logger.LogInformation($"Adding to queue: Action=ProcessDocument, Container={msg.Container}, Path={item.Blob.Name}");
+
 
                                     // Push a new message for each blob
                                     await queueClient.SendMessageAsync((new Message()

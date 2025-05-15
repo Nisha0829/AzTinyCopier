@@ -279,12 +279,23 @@ namespace AzTinyCopier
                                             Interlocked.Add(ref blobBytesMoved, blob.Value.Source.Size);
                                         }
                                     }
+                                    catch (Exception exJson)
+                                    {
+                                        // Handle or log JSON parse errors gracefully
+                                        _logger.LogWarning($"Skipping blob {blob.Key} due to JSON parse error: {exJson.Message}");
+                                    }
+
                                 }
+                                 catch (Exception ex)
+                                    {
+                                        _logger.LogError(ex, $"Error processing blob {blob.Key}");
+                                    }
+                                finally {
+                                    Interlocked.Add(ref blobCount, 1);
+                                    Interlocked.Add(ref blobBytes, blob.Value.Source.Size);
 
-                            Interlocked.Add(ref blobCount, 1);
-                            Interlocked.Add(ref blobBytes, blob.Value.Source.Size);
-
-                            slim.Release();
+                                    slim.Release();
+                                }
                         }));
                     }
 

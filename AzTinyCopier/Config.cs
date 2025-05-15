@@ -15,5 +15,6 @@
 
         public int ThreadCount { get; set; }
         public int BatchSize { get; set; } = 100000;
+        public bool DeleteSourceAfterCopy { get; set; } = false;
     }
 }

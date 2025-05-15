@@ -150,9 +150,11 @@ namespace AzTinyCopier
                     };
                     sasBuilder.SetPermissions(BlobAccountSasPermissions.Read);
                     Uri sasUri = sourceBlobContainerClient.GenerateSasUri(sasBuilder);
+                    var sourceBlobs = new ConcurrentDictionary<string, BlobInfo>();
 
                     var destinationBlobServiceClient = new BlobServiceClient(_config.DestinationConnection);
                     var destinationBlobContainerClient = destinationBlobServiceClient.GetBlobContainerClient(msg.Container);
+                    var destinationBlobs = new ConcurrentDictionary<string, BlobInfo>();
                     await destinationBlobContainerClient.CreateIfNotExistsAsync();
 
                     var operationBlobServiceClient = new BlobServiceClient(_config.OperationConnection);
@@ -193,12 +195,48 @@ namespace AzTinyCopier
                                 }).ToString());
                                 subPrefixes++;
                             }
+                            else if (item.IsBlob)
+                            {
+                                sourceBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
+                            }
                         }
                     });
+
+                    var getDestinationTask = Task.Run(async () =>
+                    {
+                        await foreach (var item in destinationBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
+                        {
+                            if (item.IsBlob)
+                            {
+                                destinationBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
+                            }
+                        }
+                    });
+
+                    await Task.WhenAll(getSourceTask, getDestinationTask);
+
 
                     if (File.Exists(fileName))
                         File.Delete(fileName);
                         
+                    using (StreamWriter sw = new StreamWriter(fileName))
+                    {
+                        await sw.WriteLineAsync($"File,Source Size,Source MD5,Source Last Modified,Destination Size,Destination MD5,Destination Last Modified");
+                        foreach (var item in sourceBlobs)
+                        {
+                            if (destinationBlobs.ContainsKey(item.Key))
+                            {
+                                var destinationBlob = destinationBlobs[item.Key];
+                                await sw.WriteLineAsync($"{item.Key},{item.Value.Size},{item.Value.ContentMD5},{item.Value.LastModified},{destinationBlob.Size},{destinationBlob.ContentMD5},{destinationBlob.LastModified}");
+                                blobs.Add(item.Key, new SourceDestinationInfo(item.Value, destinationBlob));
+                            }
+                            else
+                            {
+                                await sw.WriteLineAsync($"{item.Key},{item.Value.Size},{item.Value.ContentMD5},{item.Value.LastModified},,,");
+                                blobs.Add(item.Key, new SourceDestinationInfo(item.Value));
+                            }
+                        }
+                    }
                     var toUpload = operationBlobContainerClient.GetBlobClient($"{msg.Path}{fileName}");
                     await toUpload.DeleteIfExistsAsync(cancellationToken: cancellationToken);
                     await toUpload.UploadAsync(fileName, cancellationToken: cancellationToken);
@@ -220,7 +258,6 @@ namespace AzTinyCopier
                                     var source = sourceBlobContainerClient.GetBlobClient(blob.Key);
 
                                     await dest.SyncCopyFromUriAsync(new Uri($"{source.Uri.AbsoluteUri}{sasUri.Query}"));
-                                    await source.DeleteIfExistsAsync(DeleteSnapshotsOption.IncludeSnapshots, cancellationToken: cancellationToken);
                                 }
 
                                 Interlocked.Add(ref blobCountMoved, 1);

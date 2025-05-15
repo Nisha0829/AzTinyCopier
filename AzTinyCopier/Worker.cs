@@ -145,7 +145,6 @@ namespace AzTinyCopier
                     long blobCountMoved = 0;
                     long blobBytesMoved = 0;
                     long subPrefixes = 0;
-                    string fileName = "status.csv";
 
                     if (string.IsNullOrEmpty(_config.Delimiter))
                     {
@@ -196,13 +195,12 @@ namespace AzTinyCopier
                                         {
                                             // Send message for each document (blob) that passes the criteria
                                             _logger.LogInformation("Sending message for document: {blobName}", blobName);
-                                            var messageText = new Message()
+                                            var messageText = JsonSerializer.Serialize(new
                                             {
                                                 Action = "ProcessDocument",
                                                 Container = msg.Container,
                                                 BlobName = blobName
-                                            }.ToString();
-
+                                            });
                                             await queueClient.SendMessageAsync(messageText, cancellationToken: cancellationToken);
 
                                             Interlocked.Add(ref blobCountMoved, 1);

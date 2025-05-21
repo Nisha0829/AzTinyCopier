@@ -290,19 +290,19 @@ namespace AzTinyCopier
                     await Task.WhenAll(blobSet.ToArray());
 
 
-                    op.Telemetry.Properties.Add("Run", _config.Run);
-                    op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
-                    op.Telemetry.Properties.Add("ThreadCount", _config.ThreadCount.ToString());
-                    op.Telemetry.Properties.Add("Container", msg.Container);
-                    op.Telemetry.Properties.Add("SourceConnection", sourceBlobServiceClient.AccountName);
-                    op.Telemetry.Properties.Add("DestinationConnection", destinationBlobServiceClient.AccountName);
-                    op.Telemetry.Properties.Add("Delimiter", _config.Delimiter);
-                    op.Telemetry.Properties.Add("Prefix", msg.Path);
-                    op.Telemetry.Properties.Add("blobCount", blobCount.ToString());
-                    op.Telemetry.Properties.Add("blobBytes", blobBytes.ToString());
-                    op.Telemetry.Properties.Add("blobCountMoved", blobCountMoved.ToString());
-                    op.Telemetry.Properties.Add("blobBytesMoved", blobBytesMoved.ToString());
-                    op.Telemetry.Properties.Add("subPrefixes", subPrefixes.ToString());
+                    // op.Telemetry.Properties.Add("Run", _config.Run);
+                    // op.Telemetry.Properties.Add("WhatIf", _config.WhatIf.ToString());
+                    // op.Telemetry.Properties.Add("ThreadCount", _config.ThreadCount.ToString());
+                    // op.Telemetry.Properties.Add("Container", msg.Container);
+                    // op.Telemetry.Properties.Add("SourceConnection", sourceBlobServiceClient.AccountName);
+                    // op.Telemetry.Properties.Add("DestinationConnection", destinationBlobServiceClient.AccountName);
+                    // op.Telemetry.Properties.Add("Delimiter", _config.Delimiter);
+                    // op.Telemetry.Properties.Add("Prefix", msg.Path);
+                    // op.Telemetry.Properties.Add("blobCount", blobCount.ToString());
+                    // op.Telemetry.Properties.Add("blobBytes", blobBytes.ToString());
+                    // op.Telemetry.Properties.Add("blobCountMoved", blobCountMoved.ToString());
+                    // op.Telemetry.Properties.Add("blobBytesMoved", blobBytesMoved.ToString());
+                    // op.Telemetry.Properties.Add("subPrefixes", subPrefixes.ToString());
                     // }
             }
 

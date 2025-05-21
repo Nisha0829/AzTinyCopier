@@ -139,8 +139,8 @@ namespace AzTinyCopier
             {
                 _logger.LogInformation($"ProcessPath: {msg.Container} {msg.Path}");
                 Task.Delay(5000).Wait();
-                using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessPath"))
-                {
+                // using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessPath"))
+                // {
                     var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
                     var sourceBlobContainerClient = sourceBlobServiceClient.GetBlobContainerClient(msg.Container);
 
@@ -303,7 +303,7 @@ namespace AzTinyCopier
                     op.Telemetry.Properties.Add("blobCountMoved", blobCountMoved.ToString());
                     op.Telemetry.Properties.Add("blobBytesMoved", blobBytesMoved.ToString());
                     op.Telemetry.Properties.Add("subPrefixes", subPrefixes.ToString());
-                }
+                    // }
             }
 
             else if (msg.Action.Equals("ProcessDocument", StringComparison.InvariantCultureIgnoreCase))

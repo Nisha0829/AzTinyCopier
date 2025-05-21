@@ -137,7 +137,7 @@ namespace AzTinyCopier
             }
             else if (msg.Action.Equals("ProcessPath", StringComparison.InvariantCultureIgnoreCase))
             {
-                _logger.LogInformation($"ProcessPath: {msg.Container} {msg.Path}");
+                _logger.LogInformation($"ProcessPath New: {msg.Container} {msg.Path}");
                 Task.Delay(5000).Wait();
                 // using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessPath"))
                 // {
@@ -185,10 +185,14 @@ namespace AzTinyCopier
 
                     var getSourceTask = Task.Run(async () =>
                     {
+                     _logger.LogInformation($"before GetBlobsByHierarchyAsync: {msg.Path} {_config.Delimiter} {cancellationToken}");
                         await foreach (var item in sourceBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
                         {
+                         _logger.LogInformation($"after GetBlobsByHierarchyAsync");
                             if (item.IsPrefix)
                             {
+                             _logger.LogInformation($"item.IsPrefix: {item.IsPrefix}");
+
                                 await queueClient.SendMessageAsync((new Message()
                                 {
                                     Action = "ProcessPath",
@@ -200,6 +204,8 @@ namespace AzTinyCopier
                             }
                             else if (item.IsBlob)
                                 {
+                                   _logger.LogInformation($"item.IsBlob: {item.IsBlob}");
+
                                     // Optionally track the blob
                                     sourceBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
                                      _logger.LogInformation($"Adding to queue: Action=ProcessDocument, Container={msg.Container}, Path={item.Blob.Name}");
@@ -220,6 +226,7 @@ namespace AzTinyCopier
                     {
                         await foreach (var item in destinationBlobContainerClient.GetBlobsByHierarchyAsync(prefix: msg.Path, delimiter: _config.Delimiter, cancellationToken: cancellationToken))
                         {
+                            Task.Delay(300).Wait();
                             if (item.IsBlob)
                             {
                                 destinationBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));

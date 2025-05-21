@@ -138,6 +138,7 @@ namespace AzTinyCopier
             else if (msg.Action.Equals("ProcessPath", StringComparison.InvariantCultureIgnoreCase))
             {
                 _logger.LogInformation($"ProcessPath: {msg.Container} {msg.Path}");
+                Task.Delay(5000).Wait()
                 using (var op = _telemetryClient.StartOperation<DependencyTelemetry>("ProcessPath"))
                 {
                     var sourceBlobServiceClient = new BlobServiceClient(_config.SourceConnection);
@@ -195,6 +196,7 @@ namespace AzTinyCopier
                                     Path = item.Prefix
                                 }).ToString());
                                 subPrefixes++;
+                                Task.Delay(300).Wait()
                             }
                             else if (item.IsBlob)
                                 {

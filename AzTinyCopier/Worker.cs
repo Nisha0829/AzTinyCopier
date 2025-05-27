@@ -187,7 +187,7 @@ namespace AzTinyCopier
                     var getSourceTask = Task.Run(async () =>
                     {
                      _logger.LogInformation($"before GetBlobsByHierarchyAsync: {msg.Path} {_config.Delimiter} {cancellationToken}");
-                     var blobItems = await sourceBlobContainerClient.GetBlobsAsync(prefix: msg.Path, cancellationToken: cancellationToken).ToListAsync();
+                     var blobItems = sourceBlobContainerClient.GetBlobsAsync(prefix: msg.Path, cancellationToken: cancellationToken);
                      _logger.LogInformation($"blobItems : {blobItems}");
                         await foreach (var item in blobItems)
                         {

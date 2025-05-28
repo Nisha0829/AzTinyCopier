@@ -220,6 +220,7 @@ namespace AzTinyCopier
                             }
                         }
                     }
+                    });
 
 
                     var getDestinationTask = Task.Run(async () =>

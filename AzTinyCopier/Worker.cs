@@ -192,6 +192,8 @@ namespace AzTinyCopier
                      _logger.LogInformation($"blobItems : {blobItems}");
                     await foreach (var blobItem in blobItems)
                     {
+                      _logger.LogInformation($"after blobItem : {blobItem}");
+
                         // Process the blobItem — all items are blobs
                         sourceBlobs.TryAdd(blobItem.Name, new BlobInfo(blobItem.Properties));
                         var subPrefixesDict = new ConcurrentDictionary<string, bool>();

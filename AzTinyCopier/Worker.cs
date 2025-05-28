@@ -189,22 +189,38 @@ namespace AzTinyCopier
                      _logger.LogInformation($"before GetBlobsByHierarchyAsync: {msg.Path} {_config.Delimiter} {cancellationToken}");
                      var blobItems = sourceBlobContainerClient.GetBlobsAsync(prefix: msg.Path, cancellationToken: cancellationToken);
                      _logger.LogInformation($"blobItems : {blobItems}");
-                        await foreach (var item in blobItems)
+                        var getSourceTask = Task.Run(async () =>
                         {
-                         _logger.LogInformation($"after GetBlobsByHierarchyAsync");
-                            if (item.IsPrefix)
+                            await foreach (var blobItem in sourceBlobContainerClient.GetBlobsAsync(prefix: msg.Path, cancellationToken: cancellationToken))
                             {
-                             _logger.LogInformation($"item.IsPrefix: {item.IsPrefix}");
-
-                                await queueClient.SendMessageAsync((new Message()
+                                // Just blobs, so no need to check IsPrefix or IsBlob
+                        
+                                // Add blob info to your dictionary
+                                sourceBlobs.TryAdd(blobItem.Name, new BlobInfo(blobItem.Properties));
+                        
+                                // If you want to detect subfolders manually (optional):
+                                var remainingPath = blobItem.Name.Substring(msg.Path.Length);
+                                var delimiterIndex = remainingPath.IndexOf(_config.Delimiter);
+                        
+                                if (delimiterIndex > -1)
                                 {
-                                    Action = "ProcessPath",
-                                    Container = msg.Container,
-                                    Path = item.Prefix
-                                }).ToString());
-                                subPrefixes++;
-                                Task.Delay(300).Wait();
-                            }
+                                    // Extract simulated subfolder prefix
+                                    var subPrefix = msg.Path + remainingPath.Substring(0, delimiterIndex + 1);
+                        
+                                    // Optionally, enqueue a message to process this subfolder
+                                    // (make sure to avoid duplicates by tracking processed prefixes)
+                                    if (subPrefixesDict.TryAdd(subPrefix, true))
+                                    {
+                                        await queueClient.SendMessageAsync((new Message()
+                                        {
+                                            Action = "ProcessPath",
+                                            Container = msg.Container,
+                                            Path = subPrefix
+                                        }).ToString());
+                        
+                                        subPrefixes++;
+                                    }
+                                }
                             else if (item.IsBlob)
                                 {
                                    _logger.LogInformation($"item.IsBlob: {item.IsBlob}");

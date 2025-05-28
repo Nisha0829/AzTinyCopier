@@ -238,7 +238,7 @@ namespace AzTinyCopier
                                         Path = item.Blob.Name
                                     }).ToString(), cancellationToken: cancellationToken);
                                 }
-                        }
+                    }});
                     });
 
                     var getDestinationTask = Task.Run(async () =>

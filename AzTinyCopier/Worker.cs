@@ -209,6 +209,8 @@ namespace AzTinyCopier
                         
                                     // Optionally, enqueue a message to process this subfolder
                                     // (make sure to avoid duplicates by tracking processed prefixes)
+                                    var subPrefixesDict = new ConcurrentDictionary<string, bool>();
+
                                     if (subPrefixesDict.TryAdd(subPrefix, true))
                                     {
                                         await queueClient.SendMessageAsync((new Message()
@@ -221,7 +223,7 @@ namespace AzTinyCopier
                                         subPrefixes++;
                                     }
                                 }
-                            else if (item.IsBlob)
+                            else if (blobItem.IsBlob)
                                 {
                                    _logger.LogInformation($"item.IsBlob: {item.IsBlob}");
 

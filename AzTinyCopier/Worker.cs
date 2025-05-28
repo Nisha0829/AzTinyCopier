@@ -183,65 +183,44 @@ namespace AzTinyCopier
                         _config.ThreadCount = Environment.ProcessorCount * 8;
                     }
                     var slim = new SemaphoreSlim(_config.ThreadCount);
+                    _logger.LogInformation($"before GetBlobsByHierarchyAsync: {msg.Path} {_config.Delimiter} {cancellationToken}");
 
                     var getSourceTask = Task.Run(async () =>
                     {
                      _logger.LogInformation($"before GetBlobsByHierarchyAsync: {msg.Path} {_config.Delimiter} {cancellationToken}");
                      var blobItems = sourceBlobContainerClient.GetBlobsAsync(prefix: msg.Path, cancellationToken: cancellationToken);
                      _logger.LogInformation($"blobItems : {blobItems}");
-                        var getSourceTask = Task.Run(async () =>
+                    await foreach (var blobItem in blobItems)
+                    {
+                        // Process the blobItem — all items are blobs
+                        sourceBlobs.TryAdd(blobItem.Name, new BlobInfo(blobItem.Properties));
+                    
+                        await queueClient.SendMessageAsync(new Message()
                         {
-                            await foreach (var blobItem in sourceBlobContainerClient.GetBlobsAsync(prefix: msg.Path, cancellationToken: cancellationToken))
+                            Action = "ProcessDocument",
+                            Container = msg.Container,
+                            Path = blobItem.Name
+                        }.ToString(), cancellationToken: cancellationToken);
+                    
+                        // Optional: detect and enqueue sub-prefixes by parsing blob name
+                        var remainingPath = blobItem.Name.Substring(msg.Path.Length);
+                        var delimiterIndex = remainingPath.IndexOf(_config.Delimiter);
+                        if (delimiterIndex > -1)
+                        {
+                            var subPrefix = msg.Path + remainingPath.Substring(0, delimiterIndex + 1);
+                            if (subPrefixesDict.TryAdd(subPrefix, true))
                             {
-                                // Just blobs, so no need to check IsPrefix or IsBlob
-                        
-                                // Add blob info to your dictionary
-                                sourceBlobs.TryAdd(blobItem.Name, new BlobInfo(blobItem.Properties));
-                        
-                                // If you want to detect subfolders manually (optional):
-                                var remainingPath = blobItem.Name.Substring(msg.Path.Length);
-                                var delimiterIndex = remainingPath.IndexOf(_config.Delimiter);
-                        
-                                if (delimiterIndex > -1)
+                                await queueClient.SendMessageAsync(new Message()
                                 {
-                                    // Extract simulated subfolder prefix
-                                    var subPrefix = msg.Path + remainingPath.Substring(0, delimiterIndex + 1);
-                        
-                                    // Optionally, enqueue a message to process this subfolder
-                                    // (make sure to avoid duplicates by tracking processed prefixes)
-                                    var subPrefixesDict = new ConcurrentDictionary<string, bool>();
+                                    Action = "ProcessPath",
+                                    Container = msg.Container,
+                                    Path = subPrefix
+                                }.ToString(), cancellationToken: cancellationToken);
+                                subPrefixes++;
+                            }
+                        }
+                    }
 
-                                    if (subPrefixesDict.TryAdd(subPrefix, true))
-                                    {
-                                        await queueClient.SendMessageAsync((new Message()
-                                        {
-                                            Action = "ProcessPath",
-                                            Container = msg.Container,
-                                            Path = subPrefix
-                                        }).ToString());
-                        
-                                        subPrefixes++;
-                                    }
-                                }
-                            else if (blobItem.IsBlob)
-                                {
-                                   _logger.LogInformation($"item.IsBlob: {item.IsBlob}");
-
-                                    // Optionally track the blob
-                                    sourceBlobs.TryAdd(item.Blob.Name, new BlobInfo(item.Blob.Properties));
-                                     _logger.LogInformation($"Adding to queue: Action=ProcessDocument, Container={msg.Container}, Path={item.Blob.Name}");
-
-
-                                    // Push a new message for each blob
-                                    await queueClient.SendMessageAsync((new Message()
-                                    {
-                                        Action = "ProcessDocument",
-                                        Container = msg.Container,
-                                        Path = item.Blob.Name
-                                    }).ToString(), cancellationToken: cancellationToken);
-                                }
-                    }});
-                    });
 
                     var getDestinationTask = Task.Run(async () =>
                     {

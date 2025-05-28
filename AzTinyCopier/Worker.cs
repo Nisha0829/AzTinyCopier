@@ -194,6 +194,8 @@ namespace AzTinyCopier
                     {
                         // Process the blobItem — all items are blobs
                         sourceBlobs.TryAdd(blobItem.Name, new BlobInfo(blobItem.Properties));
+                        var subPrefixesDict = new ConcurrentDictionary<string, bool>();
+
                     
                         await queueClient.SendMessageAsync(new Message()
                         {
